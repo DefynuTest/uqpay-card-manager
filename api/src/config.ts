@@ -4,8 +4,8 @@ dotenv.config();
 export const config = {
   port: parseInt(process.env.PORT || '4100'),
   redis: {
-    url: process.env.UPSTASH_REDIS_REST_URL || '',
-    token: process.env.UPSTASH_REDIS_REST_TOKEN || '',
+    url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '',
+    token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '',
   },
   zoqq: {
     configBaseUrl: process.env.CONFIG_BASE_URL || '',
