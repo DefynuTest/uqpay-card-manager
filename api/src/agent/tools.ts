@@ -159,6 +159,9 @@ export async function executeTool(
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
   } catch (err: any) {
-    return JSON.stringify({ error: err.message || 'Tool execution failed' });
+    const status = err?.response?.status || '';
+    const responseData = err?.response?.data ? JSON.stringify(err.response.data).slice(0, 500) : '';
+    console.error(`[Tool] ${toolName} failed:`, err.message, status, responseData);
+    return JSON.stringify({ error: err.message || 'Tool execution failed', status, details: responseData });
   }
 }
