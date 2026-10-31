@@ -50,10 +50,12 @@ export async function getPortalConfig(domain: string): Promise<PortalConfig> {
     domain_name: full.domain_name,
     base_url_api: full.base_url_api,
     x_api_key: full.x_api_key,
-    program_id: full.program_id,
+    program_id: full.program_code || full.program_id,
     businessId: full.businessId,
     agent_code: full.agent_code || '',
     subagent_code: full.subagent_code || '',
+    client_id: full.client_id || '',
+    personid: full.personid || '',
   };
 
   cache.set(domain, { data: portalConfig, expiresAt: now + CACHE_TTL });

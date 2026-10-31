@@ -130,6 +130,8 @@ export interface PortalConfig {
   businessId: string;
   agent_code: string;
   subagent_code: string;
+  client_id: string;
+  personid: string;
 }
 
 // ─── Context Memory ───
