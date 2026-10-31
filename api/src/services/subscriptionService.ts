@@ -6,15 +6,11 @@ const KEY_PREFIX = 'cardmgr:sub:';
 
 export async function getSubscription(email: string): Promise<Subscription> {
   const redis = getRedis();
-  const raw = await redis.get(`${KEY_PREFIX}${email}`);
-  if (!raw) {
+  const data = await redis.get<Subscription>(`${KEY_PREFIX}${email}`);
+  if (!data) {
     return { status: 'none', email };
   }
-  try {
-    return { ...JSON.parse(raw), email };
-  } catch {
-    return { status: 'none', email };
-  }
+  return { ...data, email };
 }
 
 export async function subscribe(email: string): Promise<Subscription> {
@@ -33,7 +29,7 @@ export async function subscribe(email: string): Promise<Subscription> {
   };
 
   const redis = getRedis();
-  await redis.set(`${KEY_PREFIX}${email}`, JSON.stringify(sub));
+  await redis.set(`${KEY_PREFIX}${email}`, sub);
   return sub;
 }
 
@@ -50,7 +46,7 @@ export async function unsubscribe(email: string): Promise<Subscription> {
   };
 
   const redis = getRedis();
-  await redis.set(`${KEY_PREFIX}${email}`, JSON.stringify(sub));
+  await redis.set(`${KEY_PREFIX}${email}`, sub);
   return sub;
 }
 

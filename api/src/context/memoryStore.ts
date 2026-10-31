@@ -6,15 +6,14 @@ const TTL = 90 * 24 * 60 * 60; // 90 days
 
 export async function getContext(email: string): Promise<UserContext | null> {
   const redis = getRedis();
-  const raw = await redis.get(`${KEY_PREFIX}${email}`);
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+  const data = await redis.get<UserContext>(`${KEY_PREFIX}${email}`);
+  return data || null;
 }
 
 export async function setContext(email: string, ctx: UserContext): Promise<void> {
   const redis = getRedis();
   ctx.updated_at = new Date().toISOString();
-  await redis.set(`${KEY_PREFIX}${email}`, JSON.stringify(ctx), { EX: TTL });
+  await redis.set(`${KEY_PREFIX}${email}`, ctx, { ex: TTL });
 }
 
 export async function getOrCreateContext(email: string): Promise<UserContext> {

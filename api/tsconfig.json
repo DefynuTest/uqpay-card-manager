@@ -17,6 +17,6 @@
       "@shared/*": ["../shared/*"]
     }
   },
-  "include": ["src/**/*", "../shared/**/*"],
+  "include": ["index.ts", "src/**/*", "../shared/**/*"],
   "exclude": ["node_modules", "dist"]
 }
