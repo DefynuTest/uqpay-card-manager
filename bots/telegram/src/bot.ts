@@ -1,256 +1,185 @@
-import { Telegraf, Context } from 'telegraf';
+import { Telegraf } from 'telegraf';
+import { message } from 'telegraf/filters';
 import { config } from './config';
-import * as api from './api';
 import * as sessions from './sessions';
-import * as fmt from './formatters';
+import { runAgent, initConversationRedis, clearHistory } from './agent';
 
 const bot = new Telegraf(config.botToken);
 
-// Helper: get linked session or reply with error
-function requireLink(ctx: Context): { email: string; domain: string } | null {
-  const chatId = ctx.chat?.id;
-  if (!chatId) return null;
-
-  const session = sessions.getSession(chatId);
-  if (!session) {
-    ctx.replyWithMarkdownV2(fmt.notLinkedMessage());
-    return null;
-  }
-
-  sessions.updateActivity(chatId);
-  return session;
+// Telegram MarkdownV2 requires escaping special characters
+function escapeMarkdown(text: string): string {
+  return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
 }
 
-// /start
-bot.start((ctx) => {
-  ctx.replyWithMarkdownV2(fmt.welcomeMessage());
+/**
+ * Send a long message, splitting if necessary (Telegram 4096 char limit).
+ */
+async function sendMessage(chatId: number, text: string): Promise<void> {
+  // Try sending as Markdown first, fall back to plain text
+  const maxLen = 4000;
+
+  if (text.length <= maxLen) {
+    try {
+      await bot.telegram.sendMessage(chatId, text, { parse_mode: 'Markdown' });
+    } catch {
+      // Markdown parsing failed — send as plain text
+      await bot.telegram.sendMessage(chatId, text);
+    }
+    return;
+  }
+
+  // Split long messages at paragraph boundaries
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+    // Find a good split point
+    let splitAt = remaining.lastIndexOf('\n\n', maxLen);
+    if (splitAt < maxLen / 2) splitAt = remaining.lastIndexOf('\n', maxLen);
+    if (splitAt < maxLen / 2) splitAt = maxLen;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+
+  for (const chunk of chunks) {
+    try {
+      await bot.telegram.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+    } catch {
+      await bot.telegram.sendMessage(chatId, chunk);
+    }
+  }
+}
+
+// ─── /start ───
+bot.start(async (ctx) => {
+  const chatId = ctx.chat.id;
+  const session = await sessions.getSession(chatId);
+
+  if (session) {
+    await sendMessage(chatId,
+      `Welcome back! You're linked as *${session.email}*.\n\nJust tell me what you need — I can check your cards, review spending, detect anomalies, and more.\n\nType /reset to start a fresh conversation.`
+    );
+  } else {
+    await sendMessage(chatId,
+      `*Welcome to Card Manager* \n\n` +
+      `I'm your personal AI card assistant. I can help you:\n` +
+      `- Check card health and balances\n` +
+      `- Review monthly spending\n` +
+      `- Detect suspicious transactions\n` +
+      `- Answer questions about your cards\n\n` +
+      `To get started, link your account:\n` +
+      `/link your@email.com\n\n` +
+      `After linking, just talk to me naturally — no commands needed.`
+    );
+  }
 });
 
-// /help
-bot.help((ctx) => {
-  ctx.replyWithMarkdownV2(fmt.welcomeMessage());
-});
-
-// /link <email> [domain]
-bot.command('link', (ctx) => {
+// ─── /link <email> [domain] ───
+bot.command('link', async (ctx) => {
   const args = ctx.message.text.split(/\s+/).slice(1);
   const email = args[0];
   const domain = args[1] || config.defaultDomain;
 
   if (!email || !email.includes('@')) {
-    ctx.replyWithMarkdownV2('⚠️ Usage: /link your\\@email\\.com \\[domain\\]');
+    await sendMessage(ctx.chat.id, 'Usage: /link your@email.com [domain]');
     return;
   }
 
   if (!domain) {
-    ctx.replyWithMarkdownV2('⚠️ No domain configured\\. Use: /link your\\@email\\.com yourdomain\\.com');
+    await sendMessage(ctx.chat.id, 'No domain configured. Use: /link your@email.com yourdomain.com');
     return;
   }
 
-  sessions.setSession(ctx.chat.id, email, domain);
-  ctx.replyWithMarkdownV2(fmt.linkedMessage(email));
-});
-
-// /unlink
-bot.command('unlink', (ctx) => {
-  sessions.removeSession(ctx.chat.id);
-  ctx.replyWithMarkdownV2(fmt.unlinkedMessage());
-});
-
-// /status — subscription status
-bot.command('status', async (ctx) => {
-  const session = requireLink(ctx);
-  if (!session) return;
-
-  try {
-    const data = await api.getSubscription(session.email, session.domain);
-    ctx.replyWithMarkdownV2(fmt.formatSubscription(data));
-  } catch (err) {
-    ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-  }
-});
-
-// /subscribe
-bot.command('subscribe', async (ctx) => {
-  const session = requireLink(ctx);
-  if (!session) return;
-
-  try {
-    const data = await api.subscribe(session.email, session.domain);
-    ctx.replyWithMarkdownV2(`✅ *Subscribed\\!*\n\nYou now have access to Card Manager\\.\nType /health to check your cards\\.`);
-  } catch (err) {
-    ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-  }
-});
-
-// /unsubscribe
-bot.command('unsubscribe', async (ctx) => {
-  const session = requireLink(ctx);
-  if (!session) return;
-
-  try {
-    await api.unsubscribe(session.email, session.domain);
-    ctx.replyWithMarkdownV2(`🔓 Subscription cancelled\\.\nYou can re\\-subscribe anytime with /subscribe`);
-  } catch (err) {
-    ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-  }
-});
-
-// /health — card health report
-bot.command('health', async (ctx) => {
-  const session = requireLink(ctx);
-  if (!session) return;
-
-  try {
-    ctx.replyWithMarkdownV2('🔄 Checking your cards\\.\\.\\.');
-    const data = await api.getCardHealth(session.email, session.domain);
-    ctx.replyWithMarkdownV2(fmt.formatHealth(data));
-  } catch (err) {
-    ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-  }
-});
-
-// /cards — list cards (uses health endpoint, shows card IDs)
-bot.command('cards', async (ctx) => {
-  const session = requireLink(ctx);
-  if (!session) return;
-
-  try {
-    const data = await api.getCardHealth(session.email, session.domain);
-    ctx.replyWithMarkdownV2(fmt.formatCards(data));
-  } catch (err) {
-    ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-  }
-});
-
-// /anomalies <cardId>
-bot.command('anomalies', async (ctx) => {
-  const session = requireLink(ctx);
-  if (!session) return;
-
-  const args = ctx.message.text.split(/\s+/).slice(1);
-  const cardId = args[0];
-
-  if (!cardId) {
-    ctx.replyWithMarkdownV2('⚠️ Usage: /anomalies \\<card\\_id\\>\n\nUse /cards to see your card IDs\\.');
-    return;
-  }
-
-  try {
-    ctx.replyWithMarkdownV2('🔄 Scanning transactions\\.\\.\\.');
-    const data = await api.getAnomalies(session.email, session.domain, cardId);
-    ctx.replyWithMarkdownV2(fmt.formatAnomalies(data));
-  } catch (err) {
-    ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-  }
-});
-
-// /statement <year> <month>
-bot.command('statement', async (ctx) => {
-  const session = requireLink(ctx);
-  if (!session) return;
-
-  const args = ctx.message.text.split(/\s+/).slice(1);
-  let year: number;
-  let month: number;
-
-  if (args.length >= 2) {
-    year = parseInt(args[0]);
-    month = parseInt(args[1]);
-  } else if (args.length === 1 && args[0].includes('-')) {
-    // Support YYYY-MM format
-    const parts = args[0].split('-');
-    year = parseInt(parts[0]);
-    month = parseInt(parts[1]);
-  } else {
-    // Default to current month
-    const now = new Date();
-    year = now.getFullYear();
-    month = now.getMonth() + 1;
-  }
-
-  if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
-    ctx.replyWithMarkdownV2('⚠️ Usage: /statement 2026 10 or /statement 2026\\-10');
-    return;
-  }
-
-  try {
-    ctx.replyWithMarkdownV2('🔄 Generating statement\\.\\.\\.');
-    const data = await api.getStatement(session.email, session.domain, year, month);
-    ctx.replyWithMarkdownV2(fmt.formatStatement(data));
-  } catch (err) {
-    ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-  }
-});
-
-// Catch-all for plain text messages — simple conversational handler
-bot.on('text', async (ctx) => {
-  const text = ctx.message.text.toLowerCase().trim();
-  const session = sessions.getSession(ctx.chat.id);
-
-  if (!session) {
-    ctx.replyWithMarkdownV2(fmt.notLinkedMessage());
-    return;
-  }
-
-  sessions.updateActivity(ctx.chat.id);
-
-  // Simple keyword matching for natural language
-  if (text.includes('health') || text.includes('how are my cards') || text.includes('card status')) {
-    try {
-      const data = await api.getCardHealth(session.email, session.domain);
-      ctx.replyWithMarkdownV2(fmt.formatHealth(data));
-    } catch (err) {
-      ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-    }
-    return;
-  }
-
-  if (text.includes('statement') || text.includes('spending') || text.includes('this month')) {
-    try {
-      const now = new Date();
-      const data = await api.getStatement(session.email, session.domain, now.getFullYear(), now.getMonth() + 1);
-      ctx.replyWithMarkdownV2(fmt.formatStatement(data));
-    } catch (err) {
-      ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-    }
-    return;
-  }
-
-  if (text.includes('anomal') || text.includes('suspicious') || text.includes('fraud')) {
-    ctx.replyWithMarkdownV2('ℹ️ To check anomalies, I need a card ID\\.\n\nUse /cards to see your cards, then /anomalies \\<card\\_id\\>');
-    return;
-  }
-
-  if (text.includes('subscri') || text.includes('plan') || text.includes('billing')) {
-    try {
-      const data = await api.getSubscription(session.email, session.domain);
-      ctx.replyWithMarkdownV2(fmt.formatSubscription(data));
-    } catch (err) {
-      ctx.replyWithMarkdownV2(fmt.errorMessage(err));
-    }
-    return;
-  }
-
-  if (text.includes('help') || text === 'hi' || text === 'hello' || text === 'hey') {
-    ctx.replyWithMarkdownV2(fmt.welcomeMessage());
-    return;
-  }
-
-  // Default response
-  ctx.replyWithMarkdownV2(
-    `I can help you with your cards\\! Try:\n\n` +
-    `• "how are my cards" \\- health check\n` +
-    `• "this month spending" \\- statement\n` +
-    `• "subscription" \\- billing info\n` +
-    `• /help \\- all commands`
+  await sessions.setSession(ctx.chat.id, email, domain);
+  await clearHistory(ctx.chat.id);
+  await sendMessage(ctx.chat.id,
+    `Account linked to *${email}*.\n\nI'm ready to help! Try asking:\n- "How are my cards?"\n- "Show me this month's spending"\n- "Any suspicious activity?"`
   );
 });
 
-// Launch
-bot.launch().then(() => {
-  console.log('[TelegramBot] Card Manager bot is running');
-  console.log(`[TelegramBot] API endpoint: ${config.cmApiUrl}`);
+// ─── /unlink ───
+bot.command('unlink', async (ctx) => {
+  await sessions.removeSession(ctx.chat.id);
+  await clearHistory(ctx.chat.id);
+  await sendMessage(ctx.chat.id, 'Account unlinked and conversation cleared. Use /link to connect again.');
+});
+
+// ─── /reset — clear conversation history, keep session ───
+bot.command('reset', async (ctx) => {
+  await clearHistory(ctx.chat.id);
+  await sendMessage(ctx.chat.id, 'Conversation history cleared. I still remember your account — just start a new conversation.');
+});
+
+// ─── All text messages → AI Agent ───
+bot.on(message('text'), async (ctx) => {
+  const chatId = ctx.chat.id;
+  const text = ctx.message.text;
+
+  // Ignore if it starts with / (unrecognized command)
+  if (text.startsWith('/')) {
+    await sendMessage(chatId, "I don't recognize that command. Just talk to me naturally, or use /start for help.");
+    return;
+  }
+
+  // Check session
+  const session = await sessions.getSession(chatId);
+  if (!session) {
+    await sendMessage(chatId,
+      'You need to link your account first.\n\nUse: /link your@email.com'
+    );
+    return;
+  }
+
+  await sessions.updateActivity(chatId);
+
+  // Show typing indicator
+  await ctx.sendChatAction('typing');
+
+  // Keep typing indicator alive during processing
+  const typingInterval = setInterval(() => {
+    ctx.sendChatAction('typing').catch(() => {});
+  }, 4000);
+
+  try {
+    const result = await runAgent(chatId, text, session.email, session.domain);
+
+    clearInterval(typingInterval);
+
+    if (result.toolsUsed.length > 0) {
+      console.log(`[Bot] Chat ${chatId}: "${text.slice(0, 50)}" → tools: [${result.toolsUsed.join(', ')}]`);
+    }
+
+    await sendMessage(chatId, result.text);
+  } catch (err: any) {
+    clearInterval(typingInterval);
+    console.error(`[Bot] Agent error for chat ${chatId}:`, err.message);
+
+    if (err.status === 429) {
+      await sendMessage(chatId, "I'm getting too many requests right now. Please try again in a moment.");
+    } else {
+      await sendMessage(chatId, "Sorry, I ran into an issue processing your request. Please try again.");
+    }
+  }
+});
+
+// ─── Launch ───
+async function start() {
+  await sessions.initSessionRedis();
+  await initConversationRedis();
+  console.log('[Bot] Redis stores initialized');
+
+  await bot.launch();
+  console.log('[Bot] Card Manager AI bot is running');
+  console.log(`[Bot] API endpoint: ${config.cmApiUrl}`);
+  console.log(`[Bot] Claude model: ${config.claudeModel}`);
+}
+
+start().catch((err) => {
+  console.error('[Bot] Failed to start:', err);
+  process.exit(1);
 });
 
 // Graceful shutdown
