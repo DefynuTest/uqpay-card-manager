@@ -8,6 +8,9 @@ import webhookRoutes from './routes/webhook';
 
 const app = express();
 
+// Trust proxy (required behind Vercel/CDN)
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
