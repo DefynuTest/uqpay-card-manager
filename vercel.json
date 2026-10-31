@@ -1,10 +1,9 @@
 {
   "version": 2,
-  "buildCommand": "cd api && npm install",
-  "installCommand": "cd api && npm install",
   "functions": {
     "api/index.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "api/src/**,shared/**"
     }
   },
   "rewrites": [
