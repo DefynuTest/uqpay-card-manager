@@ -81,7 +81,7 @@ function setupHandlers(bot: Telegraf): void {
   bot.command('link', async (ctx) => {
     const args = ctx.message.text.split(/\s+/).slice(1);
     const email = args[0];
-    const domain = args[1] || config.defaultDomain;
+    const domain = args[1] || config.zoqq.domainName;
 
     if (!email || !email.includes('@')) {
       await sendMessage(bot, ctx.chat.id, 'Usage: /link your@email.com [domain]');

@@ -7,16 +7,27 @@ export const config = {
     url: process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '',
     token: process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '',
   },
+  // ZOQQ API credentials (from env / secrets manager)
   zoqq: {
-    configBaseUrl: process.env.CONFIG_BASE_URL || '',
-    configXApiKey: process.env.CONFIG_X_API_KEY || '',
+    baseUrlApi: process.env.ZOQQ_BASE_URL_API || '',
+    xApiKey: process.env.ZOQQ_X_API_KEY || '',
+    programId: process.env.ZOQQ_PROGRAM_ID || '',
+    clientId: process.env.ZOQQ_CLIENT_ID || '',
+    personId: process.env.ZOQQ_PERSON_ID || '',
+    businessId: process.env.ZOQQ_BUSINESS_ID || '',
+    agentCode: process.env.ZOQQ_AGENT_CODE || '',
+    subagentCode: process.env.ZOQQ_SUBAGENT_CODE || '',
+    domainName: process.env.ZOQQ_DOMAIN_NAME || process.env.DEFAULT_DOMAIN || '',
   },
-  defaultDomain: process.env.DEFAULT_DOMAIN || '',
-  jwtSecret: process.env.JWT_SECRET || '',
+  // Static IP proxy (DigitalOcean proxy for ZOQQ API calls)
+  proxy: {
+    url: process.env.STATIC_IP_PROXY_URL || '',
+    secret: process.env.STATIC_IP_PROXY_SECRET || '',
+  },
   subscriptionPrice: parseFloat(process.env.SUBSCRIPTION_PRICE || '5'),
   // Telegram bot
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
-  webhookBaseUrl: process.env.WEBHOOK_BASE_URL || '', // e.g. https://your-app.vercel.app
+  webhookBaseUrl: process.env.WEBHOOK_BASE_URL || '',
   // AI Agent
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
   claudeModel: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514',
