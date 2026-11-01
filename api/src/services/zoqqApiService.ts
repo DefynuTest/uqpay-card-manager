@@ -21,9 +21,14 @@ async function proxyRequest(
 ): Promise<any> {
   if (config.proxy.url && config.proxy.secret) {
     // Route through static IP proxy
-    const fullUrl = params
-      ? `${url}?${new URLSearchParams(params as Record<string, string>).toString()}`
-      : url;
+    let fullUrl = url;
+    if (params && Object.keys(params).length > 0) {
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined && v !== null) qs.append(k, String(v));
+      }
+      fullUrl = `${url}?${qs.toString()}`;
+    }
 
     const res = await axios.post(
       `${config.proxy.url}/proxy`,
@@ -38,7 +43,7 @@ async function proxyRequest(
           'Content-Type': 'application/json',
           'x-proxy-secret': config.proxy.secret,
         },
-        timeout: timeout + 5000, // Extra buffer for proxy hop
+        timeout: timeout + 5000,
       }
     );
     return res;
@@ -147,6 +152,22 @@ export async function listCards(cfg: PortalConfig, cardholderId: string): Promis
 }
 
 /**
+ * Get card detail including available balance.
+ */
+export async function getCardDetail(cfg: PortalConfig, cardId: string): Promise<{ available_balance: number; card_status: string; [key: string]: any }> {
+  const headers = await buildHeaders(cfg);
+  const res = await proxyRequest(
+    'GET',
+    `${cfg.base_url_api}/zoqq/api/v1/card/detail`,
+    headers,
+    { id: cardId }
+  );
+
+  const data = res.data?.data?.[0] || res.data?.data;
+  return data || { available_balance: 0, card_status: 'unknown' };
+}
+
+/**
  * Get transactions for a specific card.
  */
 export async function getCardTransactions(
@@ -156,27 +177,28 @@ export async function getCardTransactions(
 ): Promise<{ transactions: ZoqqCardTransaction[]; totalCount?: number }> {
   const headers = await buildHeaders(cfg);
   const params: Record<string, any> = {
-    card_hash_id: cardId,
-    page: opts.page || 1,
-    page_size: opts.pageSize || 100,
+    id: cardId,
+    page_number: opts.page || 1,
+    page_size: opts.pageSize || 20,
   };
-  if (opts.fromDate) params.from_date = opts.fromDate;
-  if (opts.toDate) params.to_date = opts.toDate;
+  if (opts.fromDate) params.from_created_at = opts.fromDate;
+  if (opts.toDate) params.to_created_at = opts.toDate;
 
   const res = await proxyRequest(
     'GET',
-    `${cfg.base_url_api}/zoqq/api/v1/card/transactions`,
+    `${cfg.base_url_api}/zoqq/api/v1/card/transaction`,
     headers,
     params,
     undefined,
     30000
   );
 
-  const data = res.data?.data;
-  const transactions = Array.isArray(data) ? data : (data?.transactions || []);
+  const transactions = res.data?.data || [];
+  const pagination = res.data?.pagination || res.data?.page_info || {};
+  const totalCount = pagination.total_count ?? pagination.totalCount ?? pagination.total ?? transactions.length;
 
   return {
     transactions,
-    totalCount: data?.total_count || transactions.length,
+    totalCount,
   };
 }
