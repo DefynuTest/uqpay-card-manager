@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { Telegraf } from 'telegraf';
 import { config } from '../config';
 import * as sessions from '../telegram/sessions';
+import * as otpService from '../services/otpService';
+import * as emailService from '../services/emailService';
 import { runAgent, clearHistory } from '../agent';
 
 const router = Router();
@@ -72,32 +74,71 @@ function setupHandlers(bot: Telegraf): void {
         `- Answer questions about your cards\n\n` +
         `To get started, link your account:\n` +
         `/link your@email.com\n\n` +
-        `After linking, just talk to me naturally — no commands needed.`
+        `You'll receive a verification code via email to confirm your identity.`
       );
     }
   });
 
-  // /link <email> [domain]
+  // /link <email> — starts OTP verification flow
   bot.command('link', async (ctx) => {
+    const chatId = ctx.chat.id;
     const args = ctx.message.text.split(/\s+/).slice(1);
-    const email = args[0];
+    const email = args[0]?.toLowerCase();
     const domain = args[1] || config.zoqq.domainName;
 
     if (!email || !email.includes('@')) {
-      await sendMessage(bot, ctx.chat.id, 'Usage: /link your@email.com [domain]');
+      await sendMessage(bot, chatId, 'Usage: /link your@email.com');
       return;
     }
 
     if (!domain) {
-      await sendMessage(bot, ctx.chat.id, 'No domain configured. Use: /link your@email.com yourdomain.com');
+      await sendMessage(bot, chatId, 'No domain configured. Use: /link your@email.com yourdomain.com');
       return;
     }
 
-    await sessions.setSession(ctx.chat.id, email, domain);
-    await clearHistory(ctx.chat.id);
-    await sendMessage(bot, ctx.chat.id,
-      `Account linked to *${email}*.\n\nI'm ready to help! Try asking:\n- "How are my cards?"\n- "Show me this month's spending"\n- "Any suspicious activity?"`
+    // Generate OTP
+    const code = await otpService.generateOtp(chatId, email);
+
+    if (!code) {
+      await sendMessage(bot, chatId,
+        'A verification code was recently sent. Please wait a minute before requesting a new one.'
+      );
+      return;
+    }
+
+    // Send OTP via email
+    try {
+      await emailService.sendOtpEmail(email, code);
+    } catch (err: any) {
+      console.error(`[Webhook] Failed to send OTP email to ${email.slice(0, 3)}***:`, err.message);
+      await otpService.cancelOtp(chatId);
+      await sendMessage(bot, chatId,
+        'Failed to send verification email. Please check your email address and try again.'
+      );
+      return;
+    }
+
+    // Store domain temporarily for when OTP is verified
+    await sessions.setPendingDomain(chatId, domain);
+
+    await sendMessage(bot, chatId,
+      `A 6-digit verification code has been sent to *${email}*.\n\n` +
+      `Please enter the code here to complete linking.\n\n` +
+      `_Code expires in 5 minutes. Type /cancel to abort._`
     );
+  });
+
+  // /cancel — cancel pending OTP
+  bot.command('cancel', async (ctx) => {
+    const chatId = ctx.chat.id;
+    const hadPending = await otpService.hasPendingOtp(chatId);
+
+    if (hadPending) {
+      await otpService.cancelOtp(chatId);
+      await sendMessage(bot, chatId, 'Verification cancelled. Use /link to try again.');
+    } else {
+      await sendMessage(bot, chatId, "Nothing to cancel. Use /start for help.");
+    }
   });
 
   // /unlink
@@ -113,7 +154,7 @@ function setupHandlers(bot: Telegraf): void {
     await sendMessage(bot, ctx.chat.id, 'Conversation history cleared. I still remember your account — just start a new conversation.');
   });
 
-  // All text messages → AI Agent
+  // All text messages
   bot.on('message', async (ctx) => {
     if (!('text' in ctx.message)) return;
     const chatId = ctx.chat.id;
@@ -124,6 +165,33 @@ function setupHandlers(bot: Telegraf): void {
       return;
     }
 
+    // Check if user is mid-OTP verification
+    const hasPending = await otpService.hasPendingOtp(chatId);
+    if (hasPending) {
+      // Treat the message as an OTP attempt
+      const verifiedEmail = await otpService.verifyOtp(chatId, text);
+
+      if (verifiedEmail) {
+        const domain = await sessions.getPendingDomain(chatId) || config.zoqq.domainName;
+        await sessions.setSession(chatId, verifiedEmail, domain);
+        await sessions.clearPendingDomain(chatId);
+        await clearHistory(chatId);
+        await sendMessage(bot, chatId,
+          `Account verified and linked to *${verifiedEmail}*.\n\n` +
+          `I'm ready to help! Try asking:\n` +
+          `- "How are my cards?"\n` +
+          `- "Show me this month's spending"\n` +
+          `- "Any suspicious activity?"`
+        );
+      } else {
+        await sendMessage(bot, chatId,
+          'Invalid or expired code. Please try again, or type /cancel to abort.'
+        );
+      }
+      return;
+    }
+
+    // Normal flow — must be linked
     const session = await sessions.getSession(chatId);
     if (!session) {
       await sendMessage(bot, chatId, 'You need to link your account first.\n\nUse: /link your@email.com');

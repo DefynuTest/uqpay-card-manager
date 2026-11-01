@@ -1,7 +1,9 @@
 import { getRedis } from '../redis';
 
 const KEY_PREFIX = 'cardmgr:tgsession:';
+const PENDING_DOMAIN_PREFIX = 'cardmgr:pending_domain:';
 const TTL = 30 * 24 * 60 * 60; // 30 days
+const PENDING_TTL = 300; // 5 minutes (matches OTP TTL)
 
 export interface TelegramSession {
   email: string;
@@ -41,4 +43,19 @@ export async function removeSession(chatId: number): Promise<boolean> {
   const redis = getRedis();
   const result = await redis.del(`${KEY_PREFIX}${chatId}`);
   return result > 0;
+}
+
+export async function setPendingDomain(chatId: number, domain: string): Promise<void> {
+  const redis = getRedis();
+  await redis.set(`${PENDING_DOMAIN_PREFIX}${chatId}`, domain, { ex: PENDING_TTL });
+}
+
+export async function getPendingDomain(chatId: number): Promise<string | null> {
+  const redis = getRedis();
+  return await redis.get<string>(`${PENDING_DOMAIN_PREFIX}${chatId}`);
+}
+
+export async function clearPendingDomain(chatId: number): Promise<void> {
+  const redis = getRedis();
+  await redis.del(`${PENDING_DOMAIN_PREFIX}${chatId}`);
 }

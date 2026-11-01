@@ -33,4 +33,7 @@ export const config = {
   claudeModel: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514',
   maxConversationTurns: parseInt(process.env.MAX_CONVERSATION_TURNS || '50'),
   maxToolRoundtrips: parseInt(process.env.MAX_TOOL_ROUNDTRIPS || '10'),
+  // Email (Resend)
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  emailFrom: process.env.EMAIL_FROM || 'Card Manager <noreply@zoqq.com>',
 };
