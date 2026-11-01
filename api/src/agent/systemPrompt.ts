@@ -1,4 +1,5 @@
 import type { UserContext } from '@shared/types';
+import { KNOWLEDGE_BASE } from './knowledgeBase';
 
 export function buildSystemPrompt(userContext: UserContext | null): string {
   const now = new Date();
@@ -84,5 +85,7 @@ ${userContext?.preferences?.style === 'detailed'
 ## Important
 - Always use tools to get real data. Never make up balances, transactions, or card statuses.
 - If you don't have enough information to answer, ask the user to clarify.
-- If the user seems confused or new, briefly explain what you can help with.`;
+- If the user seems confused or new, briefly explain what you can help with.
+
+${KNOWLEDGE_BASE}`;
 }
